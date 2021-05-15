@@ -1,94 +1,66 @@
-from datetime import datetime
-from django.contrib.sessions.models import Session
-from rest_framework import status
-from rest_framework.views import APIView
+from django.http import response, HttpResponseRedirect
+from django.shortcuts import render
+from django.views.generic.base import TemplateView, View
+from rest_framework import generics
+from django.urls import reverse_lazy
+from django.utils.decorators import method_decorator
+from django.views.decorators.cache import never_cache
+from django.views.decorators.csrf import csrf_protect
+from django.views.generic.edit import FormView
+from django.contrib.auth.forms import AuthenticationForm
+from django.contrib.auth import login, logout, authenticate
 from rest_framework.response import Response
+from rest_framework.views import APIView
 from rest_framework.authtoken.models import Token
-from rest_framework.authtoken.views import ObtainAuthToken
+from rest_framework import serializers, status
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.authentication import TokenAuthentication
 
-from apps.users.api.serializers import UserTokenSerializer
+from .serializers import UserSerializers
 
+# Create your views here.
 
-class UserToken(APIView):
-    """
-    Return Token for an username sended
-    """
+class Home(APIView):
+    template_name= 'home.html'
+    permission_classes = (IsAuthenticated,)
+    authentication_class = (TokenAuthentication,)
 
-    def get(self, request, *args, **kwargs):
-        username = request.GET.get('username')
-        try:
-            user_token = Token.objects.get(
-                user=UserTokenSerializer().Meta.model.objects.filter(username=username).first()
-            )
-            return Response({
-                'token': user_token.key
-            })
-        except:
-            return Response({
-                'error': 'Credenciales enviadas incorrectas.'
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-
-class Login(ObtainAuthToken):
-
-    def post(self, request, *args, **kwargs):
-        # enviando a serializer username & password
-        login_serializer = self.serializer_class(
-            data=request.data, context={'request': request})
-        if login_serializer.is_valid():
-            # login serializer return user en validated_data
-            user = login_serializer.validated_data['user']
-            if user.is_active:
-                token, created = Token.objects.get_or_create(user=user)
-                user_serializer = UserTokenSerializer(user)
-                if created:
-                    return Response({
-                        'token': token.key,
-                        'user': user_serializer.data,
-                        'message': 'Inicio de Sesión Exitoso.'
-                    }, status=status.HTTP_201_CREATED)
-                else:
-                    
-                    token.delete()
-                    return Response({
-                        'error': 'Ya se ha iniciado sesión con este usuario.'
-                    }, status=status.HTTP_409_CONFLICT)
-            else:
-                return Response({'error': 'Este usuario no puede iniciar sesión.'},
-                                status=status.HTTP_401_UNAUTHORIZED)
+class UserAPi(APIView):
+    #Create usuario 
+    def post(self, request):
+        serializers = UserSerializers(data=request.data)
+        if serializers.is_valid():
+            user = serializers.save()
+            return Response(serializers.data, status=status.HTTP_201_CREATED)
         else:
-            return Response({'error': 'Nombre de usuario o contraseña incorrectos.'},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return response(serializers.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-class Logout(APIView):
+class Login(FormView):
+    template_name = "login.html"
+    form_class = AuthenticationForm
+    success_url = reverse_lazy('user:Home')
 
-    def get(self, request, *args, **kwargs):
-        try:
-            token = request.GET.get('token')
-            token = Token.objects.filter(key=token).first()
+    @method_decorator(csrf_protect)
+    @method_decorator(never_cache)
+    def dispatch(self, request, *args, **kwargs):
+        if request.user.is_authenticated:
+            return HttpResponseRedirect(self.get_success_url())
+        else:
+            return super(Login, self).dispatch(request, *args, *kwargs)
 
-            if token:
-                user = token.user
-                # Elimina todas las sessione spor usuario
-                all_sessions = Session.objects.filter(
-                    expire_date__gte=datetime.now())
-                if all_sessions.exists():
-                    for session in all_sessions:
-                        session_data = session.get_decoded()
-                        
-                        if user.id == int(session_data.get('_auth_user_id')):
-                            session.delete()
-                # eliminar user token
-                token.delete()
+    def form_valid(self, form):
+        user = authenticate(
+            username=form.cleaned_data['username'], password=form.cleaned_data['password'])
+        token, _ = Token.objects.get_or_create(user=user)
+        if token:
+            login(self.request, form.get_user())
+            return super(Login, self).form_valid(form)
 
-                session_message = 'Sesiones de usuario eliminadas.'
-                token_message = 'Token eliminado.'
-                return Response({'token_message': token_message, 'session_message': session_message},
-                                status=status.HTTP_200_OK)
 
-            return Response({'error': 'No se ha encontrado un usuario con estas credenciales.'},
-                            status=status.HTTP_400_BAD_REQUEST)
-        except:
-            return Response({'error': 'No se ha encontrado token en la petición.'},
-                            status=status.HTTP_409_CONFLICT)
+class Logout(View):
+    success_url = reverse_lazy('user:Home')
+    def get(self, request, format=None):
+        request.user.auth_token.delete()
+        logout(request)
+        return HttpResponseRedirect(self.get_success_url())

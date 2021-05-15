@@ -43,11 +43,12 @@ LOCAL_APPS = [
 
     'apps.users',
     'apps.rutismoApp',
-    
+
 ]
 
 THIRD_APPS = [
     'rest_framework',
+    'rest_framework.authtoken',
     'simple_history',
 ]
 
@@ -69,7 +70,7 @@ ROOT_URLCONF = 'rutismo.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': ['templates'],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
